@@ -1220,6 +1220,46 @@ GET /api/feedback/event/{eventId}
 
 ---
 
+### 15.3 Feedback Rate Limiting
+
+Feedback submission should be rate limited separately from general API traffic so
+event attendees can retry occasional network failures without allowing feedback
+spam. Configure the backend with explicit window parameters rather than hardcoded
+values.
+
+| Parameter | Default | Purpose |
+|-----------|---------|---------|
+| `FEEDBACK_RATE_LIMIT_WINDOW_SECONDS` | `3600` | Rolling window used for feedback submission limits. |
+| `FEEDBACK_RATE_LIMIT_MAX_REQUESTS` | `5` | Maximum accepted `POST /api/feedback` requests per authenticated user in the window. |
+| `FEEDBACK_RATE_LIMIT_KEY_SCOPE` | `user_event` | Recommended key scope so each user is limited per event, not across all events. |
+
+**Applies To:** `POST /api/feedback`
+
+**Recommended behavior:**
+- Count only valid authenticated attempts after basic request parsing.
+- Use a composite key of `userId:eventId` when `FEEDBACK_RATE_LIMIT_KEY_SCOPE`
+  is `user_event`.
+- Return standard rate-limit headers on every feedback submission response:
+  `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset`.
+- Return `429 Too Many Requests` when the user exceeds the configured window.
+
+**Rate Limit Error `429`:**
+```json
+{
+  "status": 429,
+  "error": "Too Many Requests",
+  "message": "Feedback submission limit reached. Please try again later.",
+  "path": "/api/feedback",
+  "timestamp": "2026-08-16T10:00:00",
+  "retryAfterSeconds": 1800
+}
+```
+
+The frontend should surface the `message` field and may use
+`retryAfterSeconds` to show a countdown when available.
+
+---
+
 ## 16. Real-Time / SSE APIs
 
 The frontend has a `RealTimeContext.js` referencing real-time updates. The `sse-mock-server.js` file at the project root simulates SSE events.
