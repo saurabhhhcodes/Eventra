@@ -13,6 +13,7 @@ This guide will help you understand how to contribute effectively, maintain high
 - [Ways to Contribute](#-ways-to-contribute)
 - [Development Workflow](#-development-workflow)
 - [Code Standards](#-code-standards)
+- [Storybook Component Testing Standards](#-storybook-component-testing-standards)
 - [Frontend Guidelines](#-frontend-guidelines)
 - [Backend Guidelines](#-backend-guidelines)
 - [Commit Message Guidelines](#-commit-message-guidelines)
@@ -126,6 +127,87 @@ Proper testing ensures that our features are reliable and maintainable. Please f
 - Test thoroughly before submitting your PR to ensure everything works as expected.
 - Use descriptive test names and cover edge cases whenever possible.
 - Ensure tests pass consistently in both local and CI environments.
+
+---
+
+## 📚 Storybook Component Testing Standards
+
+Storybook is the fastest way to review isolated UI states before they reach a route-level page. Eventra already keeps Storybook configuration in `.storybook/` and component stories near the related component, such as `src/components/Button.stories.jsx` and the shared `src/components/common/*.stories.jsx` examples.
+
+### When to Add or Update Stories
+
+Add or update a Storybook story whenever your PR changes a reusable UI component, shared layout state, empty/loading/error state, or interaction pattern that can be reviewed without a backend request. A good story should make the intended UI state obvious to reviewers and future contributors.
+
+Prioritize stories for:
+
+- reusable components in `src/components/`
+- loading, empty, error, success, and permission states
+- responsive variants that can break on mobile
+- accessibility-sensitive controls such as buttons, dialogs, forms, dropdowns, and navigation
+- visual regressions that are hard to catch from unit tests alone
+
+### Story File Conventions
+
+- Place stories next to the component or inside the matching shared component folder.
+- Name files as `ComponentName.stories.jsx`.
+- Use a clear `title`, for example `Components/Button` or `Components/Common/Loading`.
+- Export small named stories such as `Default`, `Loading`, `Error`, `Empty`, `Mobile`, or `WithLongContent`.
+- Keep story data realistic but safe. Do not include real user tokens, private emails, API keys, or production secrets.
+- Prefer props and mock data over network calls. Stories should render deterministically.
+
+### Required Story States
+
+For each changed reusable component, cover the states that reviewers need to trust the UI:
+
+- default state with normal content
+- long text or crowded content state when layout can wrap
+- disabled or loading state when the component supports it
+- error or empty state when the component represents fallback UI
+- keyboard/a11y-relevant state for controls, modals, menus, and forms
+
+If a component has only one valid state, mention that in the PR description so reviewers know the smaller story surface is intentional.
+
+### Accessibility and Interaction Checks
+
+Before opening a PR, review the story in Storybook and check:
+
+- interactive elements have visible focus states
+- icon-only buttons have accessible names
+- text has enough contrast against the background
+- content does not overflow at narrow viewport widths
+- controls work with keyboard navigation where applicable
+- animations do not hide content from review screenshots
+
+Use the Storybook a11y addon when available and fix warnings that are caused by your change. If an existing warning is outside your PR scope, document it clearly in the PR.
+
+### Local Storybook Commands
+
+Run the Storybook workflow when your PR touches reusable UI:
+
+```bash
+npm run storybook
+```
+
+For CI-style validation of the static Storybook build:
+
+```bash
+npm run build-storybook
+```
+
+If Storybook cannot run locally because of an environment or dependency issue, include the error and the fallback checks you ran in the PR description.
+
+### PR Review Checklist for UI Stories
+
+Before requesting review, confirm:
+
+- the story file name and title match the component location
+- changed visual states are represented in stories
+- mock data is local, deterministic, and non-sensitive
+- the story renders without relying on live APIs
+- `npm run build-storybook` passes, or the blocker is documented
+- screenshots are attached when the change is visual and reviewer-facing
+
+These standards keep Eventra's component library easier to review, safer to refactor, and friendlier for new GSSoC contributors.
 
 ---
 
