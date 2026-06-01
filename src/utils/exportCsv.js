@@ -65,18 +65,14 @@ const sanitizeCSVField = (field) => {
  * @param {Array<object>} attendees - List of attendee objects to export
  * @param {string} [filename]       - Desired download filename (will be sanitized)
  */
-export const exportAttendeesToCSV = (
-  attendees,
-  filename = "event-attendees.csv"
-) => {
+export const exportAttendeesToCSV = (attendees, filename = "event-attendees.csv") => {
   if (!attendees || attendees.length === 0) {
     return;
   }
 
   // Sanitize the filename: strip OS reserved characters and path separators.
   // Fall back to a safe default if sanitization produces an empty string.
-  const safeFilename =
-    filename.replace(/[/\\:*?"<>|]/g, "_").trim() || "export.csv";
+  const safeFilename = filename.replace(/[/\\:*?"<>|]/g, "_").trim() || "export.csv";
 
   const headers = ["Name", "Email", "Registration Date", "Ticket Type"];
 
@@ -108,6 +104,120 @@ export const exportAttendeesToCSV = (
     // browser when click() returns. No setTimeout needed; the deferred
     // approach used previously caused the URL to leak if the tab closed
     // within the 100 ms window before the timer could fire.
+    window.URL.revokeObjectURL(url);
+  }
+};
+
+/**
+ * exportSurveyToCSV
+ *
+ * Generates a safe CSV file from the provided survey questions and dynamic response logs,
+ * fully escaped per RFC 4180 and guarded against CSV/formula injection.
+ *
+ * @param {Array<object>} questions  - Array of active survey question objects
+ * @param {Array<object>} responses  - Array of attendee response submission objects
+ * @param {string} surveyTitle       - Raw title of the survey (will be sanitized)
+ */
+export const exportSurveyToCSV = (questions, responses, surveyTitle = "Survey") => {
+  if (!questions || questions.length === 0 || !responses || responses.length === 0) {
+    return;
+  }
+
+  // Sanitize the filename to strip OS path separators and reserved chars
+  const sanitizedTitle = surveyTitle.replace(/[/\\:*?"<>|]/g, "_").trim() || "Survey";
+  const dateStr = new Date().toISOString().split("T")[0];
+  const safeFilename = `feedback-${sanitizedTitle}-${dateStr}.csv`;
+
+  // Columns: Timestamp followed by each question prompt
+  const headers = ["Timestamp", ...questions.map((q) => q.questionText || `Question (${q.type})`)];
+
+  // Rows: Each anonymous attendee submission
+  const rows = responses.map((resp) => [
+    resp.timestamp || "",
+    ...questions.map((q) => resp.answers[q.id] ?? ""),
+  ]);
+
+  const csvContent = [headers, ...rows]
+    .map((row) => row.map(sanitizeCSVField).join(","))
+    .join("\n");
+
+  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.setAttribute("download", safeFilename);
+  document.body.appendChild(link);
+
+  try {
+    link.click();
+  } finally {
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  }
+};
+
+/**
+ * exportEventsToCSV
+ *
+ * Generates a safe CSV file from the provided events list, fully escaped per
+ * RFC 4180 and guarded against CSV/formula injection.
+ *
+ * @param {Array<object>} events      - List of event objects to export
+ * @param {string} [filename]        - Desired download filename (will be sanitized)
+ */
+export const exportEventsToCSV = (events, filename = "eventra-events.csv") => {
+  if (!events || events.length === 0) {
+    return;
+  }
+
+  // Ensure the filename ends with .csv, and sanitize path/special characters
+  let safeFilename = filename.replace(/[/\\:*?"<>|]/g, "_").trim();
+  if (!safeFilename.endsWith(".csv")) {
+    safeFilename = `${safeFilename}.csv`;
+  }
+  if (safeFilename === ".csv") {
+    safeFilename = "export.csv";
+  }
+
+  const columns = [
+    { header: "id", fn: (e) => e.id ?? "" },
+    { header: "title", fn: (e) => e.title ?? "" },
+    { header: "date", fn: (e) => e.date ?? "" },
+    { header: "time", fn: (e) => e.time ?? e.startTime ?? "" },
+    { header: "location", fn: (e) => e.location ?? "" },
+    { header: "type", fn: (e) => e.type ?? e.category ?? "" },
+    { header: "status", fn: (e) => e.status ?? "" },
+    { header: "organizer", fn: (e) => e.organizer ?? e.organizerName ?? "" },
+    { header: "description", fn: (e) => e.description ?? e.shortDescription ?? "" },
+    {
+      header: "url",
+      fn: (e) =>
+        e.id
+          ? `${typeof window !== "undefined" && window.location ? window.location.origin : ""}/events/${e.id}`
+          : "",
+    },
+  ];
+
+  const headers = columns.map((c) => c.header);
+  const rows = events.map((event) => columns.map((c) => c.fn(event)));
+
+  const csvContent = [headers, ...rows]
+    .map((row) => row.map(sanitizeCSVField).join(","))
+    .join("\n");
+
+  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.setAttribute("download", safeFilename);
+  document.body.appendChild(link);
+
+  try {
+    link.click();
+  } finally {
+    document.body.removeChild(link);
     window.URL.revokeObjectURL(url);
   }
 };

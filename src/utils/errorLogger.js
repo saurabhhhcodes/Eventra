@@ -1,45 +1,96 @@
-import * as Sentry from "@sentry/react";
+import { SENTRY_DSN, isSentryEnabled } from "../config/env.js";
 
-const dsn = process.env.REACT_APP_SENTRY_DSN;
-const isProduction = process.env.NODE_ENV === "production";
+// Try to load the real Sentry SDK. If @sentry/browser is not installed
+// (e.g. the dependency was skipped during npm install), every call below
+// is a no-op — the app continues working without remote error reporting.
+let Sentry = null;
 
-if (isProduction && dsn) {
-  Sentry.init({
-    dsn: dsn,
-    tracesSampleRate: 1.0,
-    replaysSessionSampleRate: 0.1,
-    replaysOnErrorSampleRate: 1.0,
-    integrations: [
-      Sentry.browserTracingIntegration(),
-      Sentry.replayIntegration(),
-    ],
-  });
+if (isSentryEnabled && typeof window !== "undefined") {
+  try {
+    const SentryModule = require("@sentry/browser");
+    Sentry = SentryModule;
+
+    Sentry.init({
+      dsn: SENTRY_DSN,
+      integrations: [
+        typeof SentryModule.browserTracingIntegration === "function"
+          ? SentryModule.browserTracingIntegration()
+          : null,
+        typeof SentryModule.replayIntegration === "function"
+          ? SentryModule.replayIntegration()
+          : null,
+      ].filter(Boolean),
+      tracesSampleRate: 0.25,
+      replaysSessionSampleRate: 0.1,
+      replaysOnErrorSampleRate: 1.0,
+      environment: process.env.NODE_ENV || "development",
+    });
+  } catch {
+    // Sentry SDK unavailable — local-only logging will still work
+  }
 }
 
-export const logError = (
-  error,
-  errorInfo
-) => {
+function buildErrorEntry(error, errorInfo, extra = {}) {
+  return {
+    timestamp: new Date().toISOString(),
+    url: typeof window !== "undefined" ? window.location.href : "",
+    userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "",
+    message: error ? error.toString() : "Unknown error",
+    stack: error?.stack || "",
+    componentStack: errorInfo?.componentStack || "",
+    ...extra,
+  };
+}
+
+function persistToLocalStorage(entry) {
   try {
-    console.error(
-      "[GlobalErrorBoundary]",
-      error
-    );
+    const existing = JSON.parse(localStorage.getItem("eventra_error_log") || "[]");
+    existing.unshift(entry);
+    localStorage.setItem("eventra_error_log", JSON.stringify(existing.slice(0, 10)));
+  } catch (_) {
+  }
+}
 
-    console.error(
-      "[ComponentStack]",
-      errorInfo
-    );
+export const logError = (error, errorInfo, extra = {}) => {
+  try {
+    console.group?.("[Eventra ErrorLogger]");
+    console.error("[GlobalErrorBoundary]", error);
+    if (errorInfo?.componentStack) {
+      console.error("[ComponentStack]", errorInfo);
+    }
+    if (Object.keys(extra).length) {
+      console.info("Context:", extra);
+    }
+    console.groupEnd?.();
 
-    if (isProduction && dsn) {
+    if (Sentry) {
       Sentry.withScope((scope) => {
-        if (errorInfo && errorInfo.componentStack) {
+        if (extra) scope.setExtras(extra);
+        if (errorInfo?.componentStack) {
           scope.setExtra("componentStack", errorInfo.componentStack);
         }
         Sentry.captureException(error);
       });
     }
-  } catch (_) {
-    console.warn("[ErrorLogger] Failed to log error to Sentry:", _);
+
+    const entry = buildErrorEntry(error, errorInfo, extra);
+    persistToLocalStorage(entry);
+  } catch (loggerError) {
+    console.warn("[Eventra ErrorLogger] Failed to log error:", loggerError);
   }
-};
+};
+
+export const getErrorLog = () => {
+  try {
+    return JSON.parse(localStorage.getItem("eventra_error_log") || "[]");
+  } catch (_) {
+    return [];
+  }
+};
+
+export const clearErrorLog = () => {
+  try {
+    localStorage.removeItem("eventra_error_log");
+    localStorage.removeItem("eventra_feature_errors");
+  } catch (_) {}
+};

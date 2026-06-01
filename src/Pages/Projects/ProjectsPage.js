@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { FiAlertCircle, FiChevronDown, FiSearch, FiX } from "react-icons/fi";
+import SEOHead from "../../components/SEOHead";
 
 import ProjectHero from "./ProjectHero";
 import ProjectCard from "./ProjectCard";
@@ -8,6 +9,7 @@ import ProjectCTA from "./ProjectCTA";
 
 import mockProjects from "./mockProjectsData.json";
 import { apiUtils, API_ENDPOINTS } from "../../config/api";
+import { safeJsonParse } from "../../utils/safeJsonParse";
 
 
 // Modern custom styled search input
@@ -39,7 +41,7 @@ const ProjectCardSkeleton = () => (
     <div className="p-6">
       <div className="h-6 bg-gray-200 dark:bg-gray-600 rounded w-3/4 mb-4"></div>
       <div className="h-4 bg-gray-100 dark:bg-gray-600 rounded w-full mb-2"></div>
-      <div className="h-4 w-5/6 bg-gray-100 dark:bg-gray-600 rounded w-5/6 mb-4"></div>
+      <div className="h-4 w-5/6 bg-gray-100 dark:bg-gray-600 rounded mb-4"></div>
       <div className="flex flex-wrap gap-2 mb-4">
         <div className="h-6 bg-gray-100 dark:bg-gray-600 rounded-full w-16"></div>
         <div className="h-6 bg-gray-100 dark:bg-gray-600 rounded-full w-24"></div>
@@ -65,6 +67,19 @@ const ProjectCardSkeleton = () => (
 
 
 const ProjectGallery = () => {
+  return (
+    <>
+      <SEOHead
+        title="Projects"
+        description="Explore community-built projects from hackathons, events, and open-source contributions on Eventra."
+        url={window.location.href}
+      />
+      <InnerGallery />
+    </>
+  );
+};
+
+const InnerGallery = () => {
   const [projects, setProjects] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [filterCategory, setFilterCategory] = useState("all");
@@ -76,14 +91,14 @@ const ProjectGallery = () => {
   const [categoryOpen, setCategoryOpen] = useState(false);
   const [sortOpen, setSortOpen] = useState(false);
 
-  const [bookmarks, setBookmarks] = useState(() => {
-    try {
-      const saved = localStorage.getItem("eventra_bookmarked_projects");
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
+  const [bookmarks, setBookmarks] = useState([]);
+
+  useEffect(() => {
+    const saved = localStorage.getItem("eventra_bookmarked_projects");
+    if (saved) {
+      setBookmarks(safeJsonParse(saved, []));
     }
-  });
+  }, []);
 
   const handleBookmarkToggle = (projectId) => {
     setBookmarks((prev) => {
@@ -130,11 +145,11 @@ const ProjectGallery = () => {
           publicRequestConfig
         );
         const projectsData = response.data;
-
-        // only use API data if it is non-empty; otherwise fall back to mock
-        if (projectsData && projectsData.length > 0) {
-          setProjects(projectsData);
-
+const projectsList = Array.isArray(projectsData)
+  ? projectsData
+  : projectsData?.content || projectsData?.projects || [];
+if (projectsList.length > 0) {
+  setProjects(projectsList);
           // Attempt to fetch categories from API
           try {
             const categoriesResponse = await apiUtils.get(
@@ -142,48 +157,37 @@ const ProjectGallery = () => {
               publicRequestConfig
             );
             const categoriesData = categoriesResponse.data;
-            setCategories(["all", ...categoriesData]);
+            setCategories(["all", ...(Array.isArray(categoriesData) ? categoriesData : [])]);
           } catch {
             // derive categories from API project data if categories endpoint throws
-            const uniqueCategories = [...new Set(projectsData.map(p => p.category))];
+            const uniqueCategories = [...new Set(projectsData.map(p => p?.category).filter(Boolean))];
             setCategories(["all", ...uniqueCategories]);
           }
           return; // exit successfully
         }
 
-        // --- MOCK DATA FALLBACK: API returned empty array ---
-        console.warn("Projects API returned empty array — loading mock data.");
+        // --- MOCK DATA FALLBACK: API returned empty or invalid array ---
         setProjects(mockProjects);
         const mockUniqueCategories = [
-          ...new Set(mockProjects.map((p) => p.category)),
+          ...new Set(mockProjects.map((p) => p?.category).filter(Boolean)),
         ];
         setCategories(["all", ...mockUniqueCategories]);
       } catch (err) {
-        console.error("Error fetching projects:", err);
-
         if (err?.status === 401) {
-          console.warn(
-            "Projects API returned 401 for unauthenticated access — loading public mock data fallback."
-          );
           setProjects(mockProjects);
           const fallbackCategories = [
-            ...new Set(mockProjects.map((p) => p.category)),
+            ...new Set(mockProjects.map((p) => p?.category).filter(Boolean)),
           ];
           setCategories(["all", ...fallbackCategories]);
           return;
         }
 
-        // Fall back to mock data in development so local work is unaffected
-        if (process.env.NODE_ENV === "development") {
-          console.warn("API unavailable — falling back to mock project data.");
-          setProjects(mockProjects);
-          const devUniqueCategories = [
-            ...new Set(mockProjects.map((p) => p.category)),
-          ];
-          setCategories(["all", ...devUniqueCategories]);
-        } else {
-          setError("Failed to load projects. Please try again later.");
-        }
+        // Always gracefully fall back to mock data when API is unavailable
+        setProjects(mockProjects);
+        const fallbackCategories = [
+          ...new Set(mockProjects.map((p) => p?.category).filter(Boolean)),
+        ];
+        setCategories(["all", ...fallbackCategories]);
       } finally {
         setIsLoading(false);
       }
@@ -193,7 +197,7 @@ const ProjectGallery = () => {
     fetchProjects();
   }, [fetchProjects]);
 
-  const filteredAndSortedProjects = projects
+ const filteredAndSortedProjects = (Array.isArray(projects) ? projects : [])
     .filter((project) => {
       if (filterCategory === "bookmarked") {
         if (!bookmarks.includes(project.id)) {
@@ -210,13 +214,13 @@ const ProjectGallery = () => {
         const query = searchQuery.toLowerCase();
 
         return (
-          project.title.toLowerCase().includes(query) ||
-          project.description.toLowerCase().includes(query) ||
-          project.category.toLowerCase().includes(query) ||
-          project.author.toLowerCase().includes(query) ||
-          (project.techStack &&
+          project?.title?.toLowerCase()?.includes(query) ||
+          project?.description?.toLowerCase()?.includes(query) ||
+          project?.category?.toLowerCase()?.includes(query) ||
+          project?.author?.toLowerCase()?.includes(query) ||
+          (Array.isArray(project?.techStack) &&
             project.techStack.some((tech) =>
-              tech.toLowerCase().includes(query)
+              tech?.toLowerCase()?.includes(query)
             ))
         );
       }
@@ -496,7 +500,7 @@ const ProjectGallery = () => {
                 onClick={fetchProjects}
                 disabled={isLoading}
                 className="mt-6 px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white disabled:opacity-60 disabled:cursor-not-allowed"
-              >
+               aria-label="button">
                 Try Again
               </button>
             </motion.div>

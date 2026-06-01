@@ -27,10 +27,8 @@ const resolveEnvApiBaseUrl = () => {
   if (envUrl) {
     return normalizeApiBaseUrl(envUrl);
   }
-  if (process.env.NODE_ENV === "production") {
-    if (isDev) {
-      console.warn("REACT_APP_API_URL environment variable is missing in production. Defaulting to relative API requests.");
-    }
+  if (!isDev) {
+    console.warn(`VITE_API_URL environment variable is missing in ${process.env.NODE_ENV}. Defaulting to relative API requests.`);
     return "";
   }
   return "http://localhost:8080";
@@ -62,6 +60,7 @@ const buildApiUrl = (path = "") => {
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const RETRYABLE_STATUS_CODES = [502, 503, 504];
+const RETRYABLE_METHODS = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
 const MAX_RETRIES = 1;
 const RETRY_DELAY_MS = 1_000;
 
@@ -80,6 +79,13 @@ export class ApiError extends Error {
     this.data = data;
     this.isTimeout = isTimeout;
     this.isNetworkError = isNetworkError;
+  }
+}
+
+export class RateLimitError extends ApiError {
+  constructor(message, { status = 429, data = null } = {}) {
+    super(message, { status, data });
+    this.name = "RateLimitError";
   }
 }
 
@@ -102,15 +108,25 @@ export const setOnUnauthorizedHandler = (handler) => {
   onUnauthorized = handler;
 };
 
+/**
+ * Normalise the optional config/token argument accepted by apiUtils methods.
+ *
+ * IMPORTANT — do not pass a raw JWT string as the third argument to
+ * apiUtils.post / .put / .patch:
+ *   apiUtils.post(url, data, token)   ← WRONG: token is silently discarded
+ *
+ * Authentication is carried automatically via the HttpOnly session cookie
+ * (withCredentials: true on the Axios instance). Callers must never include
+ * user identity fields (userId, adminId) in the request body either — the
+ * backend must derive identity from the verified JWT, not from client-supplied
+ * body fields.
+ */
 const normalizeRequestConfig = (configOrToken = {}) => {
   const config = typeof configOrToken === "string" ? {} : { ...configOrToken };
-  
+
   if ("skipAuth" in config) {
     delete config.skipAuth;
   }
-  // With HttpOnly cookies, the browser automatically sends the session cookie.
-  // We no longer manually append the Authorization header here.
-
   return config;
 };
 
@@ -133,18 +149,69 @@ const wrapAxiosResponse = (response) => {
       typeof response.data === "string" ? response.data : JSON.stringify(response.data),
   };
 };
+const normalizeApiError = (error) => {
+  const config = error.config || {};
+  const status = error?.response?.status;
 
-API.interceptors.request.use((config) => {
-  if (!config.signal) {
-    const controller = new AbortController();
-    config.signal = controller.signal;
-    config._abortController = controller;
+  if (
+    error.code === "ECONNABORTED" ||
+    error.name === "AbortError" ||
+    error.message?.includes("timeout")
+  ) {
+    return new ApiError(
+      `Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s: ${config.method?.toUpperCase()} ${config.url}`,
+      {
+        status,
+        isTimeout: true,
+      }
+    );
   }
 
+  if (!error.response) {
+    return new ApiError(
+      error.message ||
+        `Network error: ${config.method?.toUpperCase()} ${config.url}`,
+      {
+        status,
+        isNetworkError: true,
+      }
+    );
+  }
+
+  if (status === 429) {
+    return new RateLimitError(
+      error.response?.data?.message || "Too many requests, please try again later.",
+      { status, data: error.response?.data || null }
+    );
+  }
+
+  return new ApiError(
+    error.response?.data?.message ||
+      error.message ||
+      `Request failed with status ${status}`,
+    {
+      status,
+      data: error.response?.data || null,
+    }
+  );
+};
+
+// We completely removed the `if (!config.signal)` block that was generating the Ghost AbortController.
+API.interceptors.request.use((config) => {
   if (isDev) {
     console.debug(`[API ${config.method?.toUpperCase()}]`, buildApiUrl(config.url || ""));
   }
-
+  
+  const method = config.method?.toUpperCase();
+  if (method && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+    if (!config.headers['Idempotency-Key'] && !config.headers['X-Idempotency-Key']) {
+      const generateId = () => typeof crypto !== 'undefined' && crypto.randomUUID 
+        ? crypto.randomUUID() 
+        : `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+      config.headers['Idempotency-Key'] = generateId();
+    }
+  }
+  
   return config;
 });
 
@@ -159,44 +226,25 @@ API.interceptors.response.use(
     }
 
     const retryCount = config._retryCount || 0;
-    if (RETRYABLE_STATUS_CODES.includes(status) && retryCount < MAX_RETRIES) {
+    const isNonMutating = config.method?.toUpperCase() === 'GET';
+    const isRetryableStatus = RETRYABLE_STATUS_CODES.includes(status);
+    
+    // Retry only idempotent reads/probes. Do not blind-retry mutations or 429s,
+    // because those can duplicate writes or worsen server-side rate limiting.
+    if (isRetryableMethod && isRetryableStatus && retryCount < MAX_RETRIES) {
       config._retryCount = retryCount + 1;
+      const delay = RETRY_DELAY_MS * Math.pow(2, retryCount);
 
       if (isDev) {
         console.debug(
-          `[API ${config.method?.toUpperCase()}] ${config.url} returned ${status}, retrying in ${RETRY_DELAY_MS}ms (attempt ${config._retryCount})...`
+          `[API ${method}] ${config.url} returned ${status}, retrying in ${delay}ms (attempt ${config._retryCount})...`
         );
       }
 
-      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+      await new Promise((resolve) => setTimeout(resolve, delay));
       return API(config);
     }
-
-    if (
-      error.code === "ECONNABORTED" ||
-      error.name === "AbortError" ||
-      error.message?.includes("timeout")
-    ) {
-      throw new ApiError(
-        `Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s: ${config.method?.toUpperCase()} ${config.url}`,
-        { isTimeout: true }
-      );
-    }
-
-    if (!error.response) {
-      throw new ApiError(
-        error.message || `Network error: ${config.method?.toUpperCase()} ${config.url}`,
-        { isNetworkError: true }
-      );
-    }
-
-    throw new ApiError(
-      error.response?.data?.message || error.message || `Request failed with status ${status}`,
-      {
-        status: error.response.status,
-        data: error.response.data,
-      }
-    );
+    throw normalizeApiError(error);
   }
 );
 
@@ -207,7 +255,6 @@ API.interceptors.response.use(
 export const API_ENDPOINTS = {
   AUTH: {
     LOGIN: buildApiUrl("/api/auth/login"),
-    GOOGLE: buildApiUrl("/api/auth/google"),
     REGISTER: buildApiUrl("/api/auth/signup"),
     SIGNUP: buildApiUrl("/api/auth/signup"),
     LOGOUT: buildApiUrl("/api/auth/logout"),
@@ -215,11 +262,18 @@ export const API_ENDPOINTS = {
   },
   EVENTS: {
     CREATE: buildApiUrl("/api/events/create"),
+    ALL: buildApiUrl("/api/events"),
     LIST: buildApiUrl("/api/events"),
     DETAIL: (id) => buildApiUrl(`/api/events/${id}`),
     REGISTER: (id) => buildApiUrl(`/api/events/${id}/register`),
+
+    REGISTRANTS: (id) => buildApiUrl(`/api/events/${id}/registrants`),
+    // Convenience helper — appends ?page=&size= for callers that build the
+    // URL manually rather than going through eventFetchUtils.buildPaginatedUrl.
+    PAGINATED: (page, size) => buildApiUrl(`/api/events?page=${page}&size=${size}`),
   },
   PROJECTS: {
+    ALL: buildApiUrl("/api/projects"),
     LIST: buildApiUrl("/api/projects"),
     DETAIL: (id) => buildApiUrl(`/api/projects/${id}`),
     CATEGORIES: buildApiUrl("/api/projects/categories"),
@@ -232,14 +286,24 @@ export const API_ENDPOINTS = {
   },
   NOTIFICATIONS: {
     BASE: buildApiUrl("/api/notifications"),
+    ALL: buildApiUrl("/api/notifications"),
     READ: (id) => (id ? buildApiUrl(`/api/notifications/${id}/read`) : ""),
     READ_ALL: buildApiUrl("/api/notifications/read-all"),
+    PREFERENCES: buildApiUrl("/api/notifications/preferences"),
+    PUSH_SUBSCRIBE: buildApiUrl("/api/notifications/push-subscriptions"),
+    PUSH_UNSUBSCRIBE: buildApiUrl("/api/notifications/push-subscriptions/unsubscribe"),
   },
   USERS: {
     PROFILE: buildApiUrl("/api/users/profile"),
     ACHIEVEMENTS: buildApiUrl("/api/users/achievements"),
   },
+  VALIDATION: {
+    EMAIL: (email) => buildApiUrl(`/api/validate/email/${encodeURIComponent(email)}`),
+    USERNAME: (username) => buildApiUrl(`/api/validate/username/${encodeURIComponent(username)}`),
+    PHONE: buildApiUrl("/api/validate/phone"),
+  },
 };
+
 
 export const apiUtils = {
   get: (url, config = {}) =>
@@ -256,10 +320,11 @@ export const apiUtils = {
 
 export default API;
 
-export const API_ENDPOINTS_UPDATED = {
-  ...API_ENDPOINTS,
-  NOTIFICATIONS: {
-    ...API_ENDPOINTS.NOTIFICATIONS,
-    READ_ALL: buildApiUrl("/api/notifications/read-all"),
-  }
+export { normalizeApiError };
+
+// Centralized configuration cache store for fallback endpoints
+export const apiConfigCache = {
+  store: new Map(),
+  get(key) { return this.store.get(key); },
+  set(key, val) { this.store.set(key, val); }
 };
