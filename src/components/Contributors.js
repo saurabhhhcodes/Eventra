@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   FaGithub,
   FaExternalLinkAlt,
@@ -12,6 +12,7 @@ import { motion } from "framer-motion";
 import { useReducedMotion } from '../hooks/useReducedMotion';
 import { ContributorCardSkeleton } from "./common/SkeletonLoaders";
 import FeatureErrorBoundary from "./common/FeatureErrorBoundary";
+import SEOHead from "../components/SEOHead";
 import { storageManager } from "../utils/storage/storageManager";
 import { STORAGE_KEYS } from "../utils/storage/storageKeys";
 import { validators } from "../utils/storage/storageValidators";
@@ -25,7 +26,7 @@ const MAX_CONTRIBUTOR_PAGES = 10;
 const PROFILE_FETCH_DELAY_MS = 100; // Throttle profile API calls to avoid rate limiting
 
 let profileFetchCounter = 0;
-const throttleProfileFetch = async () => {
+export const throttleProfileFetch = async () => {
   profileFetchCounter++;
   if (profileFetchCounter % 5 === 0) {
     await new Promise(resolve => setTimeout(resolve, PROFILE_FETCH_DELAY_MS));
@@ -87,7 +88,7 @@ const cacheContributors = (data) => {
   );
 };
 
-const Contributors = () => {
+const ContributorsInner = () => {
   const prefersReducedMotion = useReducedMotion();
   const [contributors, setContributors] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -170,7 +171,8 @@ const Contributors = () => {
           );
         }
 
-        const validContributors = data.filter((c) => c && c.login);
+        // Support anonymous contributors by checking for either login or name
+        const validContributors = data.filter((c) => c && (c.login || c.name));
 
         if (validContributors.length === 0) hasMore = false;
         else {
@@ -232,7 +234,7 @@ const Contributors = () => {
   if (loading) {
     return (
       <FeatureErrorBoundary>
-        <section className="pastel-grid-bg pt-20 md:pt-24 py-20 bg-gradient-to-br from-indigo-50 to-white dark:from-gray-900 dark:to-black">
+        <section className="pastel-grid-bg pt-20 md:pt-24 py-20 bg-Linear-to-br from-indigo-50 to-white dark:from-gray-900 dark:to-black">
         <div className="max-w-7xl mx-auto px-6">
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-12 mt-16">
             {[...Array(8)].map((_, i) => (
@@ -248,7 +250,7 @@ const Contributors = () => {
   if (error)
     return (
       <FeatureErrorBoundary>
-        <section className="pastel-grid-bg pt-20 md:pt-24 py-20 bg-gradient-to-br from-indigo-50 to-white dark:from-gray-900 dark:to-black">
+        <section className="pastel-grid-bg pt-20 md:pt-24 py-20 bg-Linear-to-br from-indigo-50 to-white dark:from-gray-900 dark:to-black">
         <div className="max-w-3xl mx-auto px-6 text-center">
           <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-100 mb-4">
             Contributors are unavailable
@@ -258,7 +260,7 @@ const Contributors = () => {
             type="button"
             onClick={fetchContributors}
             className="inline-flex items-center justify-center bg-black text-white px-6 py-3 rounded-full text-sm font-semibold shadow hover:bg-zinc-800 transition-colors"
-          >
+           aria-label="Retry loading contributors">
             Retry
           </button>
         </div>
@@ -268,7 +270,7 @@ const Contributors = () => {
   return (
     // UPDATED: Section background
     <FeatureErrorBoundary>
-      <section className="pastel-grid-bg pt-20 md:pt-24 py-20 bg-gradient-to-br from-indigo-50 to-white dark:from-gray-900 dark:to-black">
+      <section className="pastel-grid-bg pt-20 md:pt-24 py-20 bg-Linear-to-br from-indigo-50 to-white dark:from-gray-900 dark:to-black">
         <div className="max-w-7xl mx-auto px-6">
           {/* Added The Search Bar */}
           <div className="flex justify-center mb-8">
@@ -290,8 +292,8 @@ const Contributors = () => {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: prefersReducedMotion ? 0 : 0.6, ease: "easeOut" }}
         >
-          🌟 Our Amazing {/* UPDATED: Gradient text for dark mode */}
-          <span className="text-black dark:text-white animate-pulse">
+          🌟 Our Amazing {/* UPDATED: Linear text for dark mode */}
+          <span className="text-black dark:text-white">
             Contributors
           </span>
         </motion.h2>
@@ -308,7 +310,7 @@ const Contributors = () => {
                 type="button"
                 onClick={fetchContributors}
                 className="mt-5 inline-flex items-center justify-center bg-black text-white px-6 py-3 rounded-full text-sm font-semibold shadow hover:bg-zinc-800 transition-colors"
-              >
+               aria-label="Retry loading contributors">
                 Retry
               </button>
             )}
@@ -316,9 +318,9 @@ const Contributors = () => {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-12">
             {filteredContributors.map((c, i) => (
-<motion.div
+              <motion.div
                 key={c.id}
-                className="relative bg-white/95 dark:bg-gray-800/90 backdrop-blur-xl p-6 rounded-2xl shadow-lg border border-gray-100 dark:border-gray-700 flex flex-col items-center text-center transition-all duration-300 ease-out"
+                className="relative overflow-visible bg-white/95 dark:bg-gray-800/90 backdrop-blur-xl p-6 rounded-2xl shadow-lg border border-gray-100 dark:border-gray-700 flex flex-col items-center text-center transition-all duration-300 ease-out"
                 initial={{ opacity: 0, y: 40 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.05 }}
@@ -336,11 +338,11 @@ const Contributors = () => {
                       decoding="async"
                       width="80"
                       height="80"
-                      src={c.avatar_url}
-                      alt={`${c.name || c.login || "Contributor"}'s GitHub profile picture`}
-                      className="w-20 h-20 rounded-full border-4 border-black shadow-xl"
+                      src={c.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(c.name || "Anon")}&background=random`}
+                      alt={`${c.name || c.login || "Contributor"}'s GitHub profile`}
+                      className="w-20 h-20 rounded-full border-4 border-black dark:border-gray-300 shadow-xl"
                     />
-                    <div className="absolute inset-0 rounded-full animate-pulse bg-black/10 blur-md"></div>
+                    <div className="absolute inset-0 rounded-full animate-pulse bg-black/10 dark:bg-white/10 blur-md"></div>
                   </div>
                 </div>
 
@@ -351,7 +353,7 @@ const Contributors = () => {
                     {c.name}
                   </h3>
                   <p className="text-black dark:text-white text-sm font-medium mb-3 flex items-center justify-center gap-1">
-                    <FaMedal className="text-amber-300 animate-bounce" />{" "}
+                    <FaMedal className="text-amber-300" />{" "}
                     {c.role}
                   </p>
                   {/* UPDATED: Contribution Badges */}
@@ -402,7 +404,7 @@ const Contributors = () => {
                 {/* Contribution Progress Bar */}
                 <div className="w-full bg-gray-200 dark:bg-gray-600 h-2 rounded-full overflow-hidden mb-4">
                   <div
-                    className="h-2 bg-black"
+                    className="h-2 bg-gray-900 dark:bg-indigo-400"
                     style={{
                       width: `${
                         (c.contributions / contributors[0].contributions) * 100
@@ -429,12 +431,11 @@ const Contributors = () => {
                 <div className="mt-auto w-full">
                   <a
                     href={c.html_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                    target="_blank" rel="noopener noreferrer"
                     className="group inline-flex items-center justify-center gap-2
-                    bg-black text-white
+                    bg-black dark:bg-white text-white dark:text-gray-900
                     px-5 py-2.5 rounded-full text-sm font-semibold shadow
-                    hover:bg-zinc-800
+                    hover:bg-zinc-800 dark:hover:bg-gray-200
                     transition-all duration-300 ease-out transform hover:scale-105 relative overflow-hidden"
                   >
                     {/* GitHub Icon with animation */}
@@ -454,4 +455,16 @@ const Contributors = () => {
     </FeatureErrorBoundary>
   );
 };
+
+const Contributors = () => (
+  <>
+    <SEOHead
+      title="Contributors"
+      description="Meet the amazing contributors building the Eventra open-source community. Join us and make an impact."
+      url={window.location.href}
+    />
+    <ContributorsInner />
+  </>
+);
+
 export default Contributors;
