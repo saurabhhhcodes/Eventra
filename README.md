@@ -104,6 +104,42 @@ Use `.env.example` as the source of truth.
 
 Security note: never place private secrets in `REACT_APP_*` or `VITE_*` variables because they are exposed to the client bundle.
 
+## Accessibility Color Tokens
+
+Use semantic color tokens for UI work instead of one-off hex values. This keeps Eventra readable across light and dark themes, makes review easier, and prevents regressions when components are reused in dashboards, cards, forms, and event pages.
+
+### Contrast Standards
+
+- Body text and form labels should meet WCAG AA contrast of at least `4.5:1` against their background.
+- Large text, icons, chart labels, and primary navigation text should meet at least `3:1`.
+- Focus rings, selected states, badges, and error or success indicators should stay distinguishable without relying on color alone.
+- Disabled controls should look inactive while keeping their labels readable.
+
+### Token Roles
+
+| Token role | Use for |
+| --- | --- |
+| `color-surface` | Page and card backgrounds |
+| `color-surface-muted` | Secondary panels, table rows, and empty states |
+| `color-text-primary` | Main headings and body copy |
+| `color-text-muted` | Helper text and metadata |
+| `color-border` | Inputs, cards, dividers, and tables |
+| `color-action-primary` | Primary buttons and active links |
+| `color-action-danger` | Destructive actions and error states |
+| `color-focus-ring` | Keyboard focus outlines |
+
+When adding a new token, define the light and dark theme values together and verify every state where the token is used.
+
+### Review Checklist
+
+Before opening a UI pull request:
+
+1. Test the changed component in light and dark mode.
+2. Check mobile and desktop layouts for title, label, and button readability.
+3. Verify hover, focus, active, disabled, success, warning, and error states.
+4. Confirm links and buttons have visible keyboard focus indicators.
+5. Run a contrast checker for any new text/background pairing and mention intentional exceptions in the PR.
+
 ## Available Scripts
 
 | Command | Description |
